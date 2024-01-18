@@ -1,0 +1,237 @@
+Q What is AWS CodeCommit?
+  AWS CodeCommit is a version control service hosted by Amazon Web Services that you can use to privately store and manage assets (such as documents, source code, and binary files) in the cloud. 
+
+Q What is AWS CodeCommit?
+AWS CodeCommit is a fully-managed source control service that makes it easy for companies to host secure and highly scalable private Git repositories. 
+CodeCommit eliminates the need to operate your own source control system or worry about scaling its infrastructure.
+
+Q What is a CodeCommit repository?
+  CodeCommit is a secure, highly scalable, managed source control service that hosts private Git repositories. 
+  CodeCommit eliminates the need for you to manage your own source control system or worry about scaling its infrastructure. 
+  You can use CodeCommit to store anything from code to binaries.
+
+AWS services
+This solution uses the following AWS services:
+
+AWS CodeCommit – A fully-managed source control service that hosts secure Git-based repositories. CodeCommit makes it easy for teams to collaborate on code in a secure and highly scalable ecosystem. This solution uses CodeCommit to create a repository to store the application and deployment codes.
+
+AWS CodeBuild – A fully managed continuous integration service that compiles source code, runs tests, and produces software packages that are ready to deploy, on a dynamically created build server. This solution uses CodeBuild to build and test the code, which we deploy later.
+
+AWS CodeDeploy – A fully managed deployment service that automates software deployments to a variety of compute services such as Amazon EC2, AWS Fargate, AWS Lambda, and your on-premises servers. This solution uses CodeDeploy to deploy the code or application onto a set of EC2 instances running CodeDeploy agents.
+
+AWS CodePipeline – A fully managed continuous delivery service that helps you automate your release pipelines for fast and reliable application and infrastructure updates. This solution uses CodePipeline to create an end-to-end pipeline that fetches the application code from CodeCommit, builds and tests using CodeBuild, and finally deploys using CodeDeploy.
+
+AWS CloudWatch Events – An AWS CloudWatch Events rule is created to trigger the CodePipeline on a Git commit to the CodeCommit repository.
+
+Amazon Simple Storage Service (Amazon S3) – An object storage service that offers industry-leading scalability, data availability, security, and performance.
+This solution uses an S3 bucket to store the build and deployment artifacts created during the pipeline run.
+
+AWS Key Management Service (AWS KMS) – AWS KMS makes it easy for you to create and manage cryptographic keys and control their use across a wide range of AWS services and in your applications. This solution uses AWS KMS to make sure that the build and deployment artifacts stored on the S3 bucket are encrypted at rest.
+
+
+Build Specification (build spec):- A buildspec is a collection of build commands and related settings, in YAML format, that CodeBuild uses to run a build.
+Without a build spec, CodeBuild cannot successfully convert your build input into build output or locate the build output artifact in the build environment to upload to  your output bucket.
+
+Step 1 - create repository and add the code 
+
+-> login to the AWS console
+-> Service -> CodeCommit
+-> Repositories 
+-> Create Repository 
+	Repository settings
+		Repository name : tf-source-repo
+-> Create
+
+
+-> Select the "tf-source-repo"
+-> Go to the Add File 
+	-> Createfile 
+-> Create a file -> tf-source-repo
+terraform {
+    required_providers {
+        aws = {
+         source = "hashicorp/aws"
+         version = "~> 5.30.0"
+        }
+    }
+    backend "s3" {
+      bucket = "demo-tf-backend-2"
+      key    = "backed"
+      region = "us-east-1"
+    }
+}
+
+provider "aws" {
+    region = "us-east-1"
+}
+
+=> Commit changes to main
+File name - provider.tf
+Author name - Mayur Sawardekar
+Email address - mayur.07.21@gmail.com
+-> Commit change 
+
+step 2 
+-> Go to the Build
+-> Build project 
+-> Create Build project 
+-> Project configuration
+	Project name - terraform-build
+	Source - Source provider - AWS CodeCommit  ( repository which we have created ) 
+		 Repository - tf-source-repo
+	Reference type
+		Branch - main ( Choose a branch that contains the code to build.) 
+	Environment
+		Environment image: Managed image
+		Compute : EC2
+		Operating system : Amazon Linux 
+		Runtime(s) : standard 
+		Image :- aws/codebuild/amazonlinux2-x86_64-standard:4.0
+		Image version :- Always use the latest image for this runtime version 
+		Role name : codebuild-terraform--service-role ( This role will create automatically ) 
+	Buildspec
+		Insert build commands - click on Switch to editor 
+		add below command 
+		 build:
+    			commands:
+    			  - sudo yum update -y 
+    			  - sudo yum install -y yum-utils 
+    			  - sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/AmazonLinux/hashicorp.repo
+    			  - sudo yum -y install terraform
+    			  #- sudo mv terraform /usr/local/bin
+     			  - terraform version 
+     			  - terraform init 
+     			  - terraform apply --auto-approve
+      # - command
+      # - command
+-> Click on Create Build Project 
+-> Once done 
+
+-> Pipeline -> Pipelines -> Create Pipeline 
+-> Choose pipeline settings 
+	Pipeline settings
+		Pipeline name : terraform-pipeline
+		 
+		Role name : AWSCodePipelineServiceRole-us-east-1-terraform-pipeline ( this role automatically create)
+-> Click on next 
+-> Add source stage -> Source 
+			- Source provider : AWS CodeCommit
+			- Repository name : tf-source-repo
+			- Branch name : main 
+-> Next 
+-> Add build stage
+	Build - optional	
+		Build provider : AWS CodeBuild
+		Region : US East (N.Virginia)
+		Project name : terraform-build
+-> Next 
+-> Add deploy stage 
+	Deploy - optional
+		Deploy provider
+-> Skip deploy stage - skip
+-> Create Pipeline 
+
+
+-> Once done go to build ( which is in the terraform-pipeline ) -> AWS CodeBuild -> Build Details -> Environment -> Service Role -> click on open in new tab ( It will open IAM role ) 
+-> IAM -> Roles -> codebuild-terraform--service-role -> Add permission -> Attach policy -> AdministratorAccess -> add permission 
+-> Go to the pipeline -> It will show  : Build - Failed ( do the troubleshooting )
+-> Once done then go to the it-source-repo using below path 
+=> Developer Tools -> CodeCommit -> Repositories -> go to the "tf-source-repo"
+-> add file -> create file -> add below script to create bucket 
+
+resource "aws_s3_bucket" "awsbucket" {
+	bucket = "my-s3-bucket-mayur"
+}
+
+File name : s3.tf
+Author name : Mayur Sawardekar
+Email address: mayur.07.21@gmail.com 
+-> commit change 
+
+=> Now go to the pipeline -> it will run automatically -> checked the logs and S3 buckets 
+
+
+=> Developer Tools -> CodeCommit -> Repositories -> go to the "tf-source-repo"
+-> add file -> create file -> add below script to create EC2 instance 
+
+resource "aws_instance" "AWSVM_server" {
+	ami = "ami-0f34c5ae932e6f0e4"
+	instance_type = "t2.micro"
+		tags = {
+		Name = "EC2TerraVM"
+	}
+}
+
+File name : EC2.tf
+Author name : Mayur Sawardekar
+Email address: mayur.07.21@gmail.com 
+-> commit change 
+
+Terraform will perform the following actions:
+
+  # aws_instance.AWSVM_server will be updated in-place
+  ~ resource "aws_instance" "AWSVM_server" {
+        id                                   = "i-0a21e4c7e57deb701"
+      ~ instance_type                        = "t2.micro" -> "t2.medium"
+        tags                                 = {
+            "Name" = "EC2TerraVM"
+        }
+        # (30 unchanged attributes hidden)
+
+        # (8 unchanged blocks hidden)
+    }
+		
+=============================================================================================================================================
+Q script to use sting variable 
+
+resource "aws_instance" "AWSVM_server" {
+    ami = "ami-0f34c5ae932e6f0e4"
+        instance_type =  var.instance_type
+        tags = {
+        Name = "EC2TerraVM2"
+    }
+}
+variable "instance_type" {
+   description = "Instance type t2.micro"
+   type        = string
+   default     = "t2.micro"
+}
+
+=============================================================================================================================================
+
+Q script to use number variable type 
+	
+resource "aws_instance" "AWSVM_server" {
+   ami           = "ami-0f34c5ae932e6f0e4"
+   instance_type =  "t2.micro"
+   count = var.instance_count
+   tags = {
+           Name = "EC2TerraVM2"
+   }
+}
+variable "instance_count" {
+  description = "EC2 instance count"
+  type        = number
+  default     = 2
+}
+
+=============================================================================================================================================
+Q script to use boolean variable type
+
+resource "aws_instance" "AWSVM_server" {
+   ami           = "ami-0f34c5ae932e6f0e4"
+   instance_type =  "t2.micro"
+   count = 1
+   associate_public_ip_address = var.enable_public_ip
+   tags = {
+           Name = "EC2TerraVM2"
+   }
+}
+variable "enable_public_ip" {
+  description = "Enable public IP address"
+  type        = bool
+  default     = true
+}
+
+
+
